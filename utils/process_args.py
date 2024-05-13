@@ -84,6 +84,7 @@ class TrainingArguments(transformers.TrainingArguments):
         default=1.0,
         metadata={"help": "Scale of KD loss."},
     )
+    gradient_checkpointing: Optional[bool] = field(default=True)
 
 
 def process_args():

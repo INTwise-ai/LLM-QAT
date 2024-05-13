@@ -27,6 +27,7 @@ from models.modeling_llama_quant import (
 import copy
 import torch
 import transformers
+from transformers import LlamaForCausalLM
 from utils import utils
 from utils import datautils
 
@@ -52,6 +53,7 @@ def train():
         student_config.w_bits = model_args.w_bits
         student_config.a_bits = model_args.a_bits
         student_config.kv_bits = model_args.kv_bits
+        
         model = LlamaForCausalLMQuant.from_pretrained(
             pretrained_model_name_or_path=model_args.input_model_filename,
             config=student_config,
@@ -87,12 +89,11 @@ def train():
     log.info("Complete model loading...")
 
     log.info("Start to load tokenizer...")
-    tokenizer = transformers.LlamaTokenizer.from_pretrained(
+    tokenizer = transformers.AutoTokenizer.from_pretrained(
         pretrained_model_name_or_path=model_args.input_model_filename,
         cache_dir=training_args.cache_dir,
         model_max_length=training_args.model_max_length,
         padding_side="right",
-        use_fast=False,
     )
     log.info("Complete tokenizer loading...")
 
@@ -113,6 +114,10 @@ def train():
         myTrainer = KDTrainer
     else:
         myTrainer = Trainer
+
+
+    model.gradient_checkpointing_enable()
+
     trainer = myTrainer(
         model=model,
         tokenizer=tokenizer,

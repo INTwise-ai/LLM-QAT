@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from . import utils
 import torch
-from apex import amp
+#from apex import amp
 from fairscale.nn.data_parallel import (
     FullyShardedDataParallel as FullyShardedDDP,
     ShardedDataParallel as ShardedDDP,
@@ -26,7 +26,7 @@ from transformers.modeling_utils import PreTrainedModel, unwrap_model
 from transformers.trainer_pt_utils import (
     get_module_class_from_name,
 )
-from transformers.trainer_utils import FSDPOption, has_length, ShardedDDPOption
+from transformers.trainer_utils import FSDPOption, has_length
 from transformers.utils import is_torch_neuroncore_available, logging
 
 logger = logging.get_logger(__name__)
