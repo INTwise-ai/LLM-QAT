@@ -23,10 +23,10 @@
 # limitations under the License.
 
 import math
-
 import torch
 import torch.nn as nn
 
+T = 5
 
 class SymQuantizer(torch.autograd.Function):
     """
@@ -42,7 +42,6 @@ class SymQuantizer(torch.autograd.Function):
         :param quant_bits: number of bits
         :return: quantized tensor
         """
-        ctx.save_for_backward(input, clip_val)
         # input = torch.clamp(input, clip_val[0], clip_val[1])
         # input = torch.where(input < clip_val[1], input, clip_val[1])
         # input = torch.where(input > clip_val[0], input, clip_val[0])
@@ -69,7 +68,14 @@ class SymQuantizer(torch.autograd.Function):
             else:
                 raise ValueError
         s = (2 ** (num_bits - 1) - 1) / (max_input + 1e-6)
-        output = torch.round(input * s).div(s + 1e-6)
+        input_scaled = input * s
+        output = torch.round(input_scaled).div(s + 1e-6)
+
+        # -----BEGIN INTWise Estimator-----
+        delta = input_scaled - torch.floor(input_scaled) - 0.5
+
+        ctx.save_for_backward(input, delta, clip_val) # save for later use
+        # -----END INTWise Estimator-----
 
         return output
 
@@ -80,10 +86,23 @@ class SymQuantizer(torch.autograd.Function):
         :param grad_output: gradient ert the quantized tensor
         :return: estimated gradient wrt the full-precision tensor
         """
-        input, clip_val = ctx.saved_tensors  # unclipped input
+        
+        input, delta, clip_val = ctx.saved_tensors
         grad_input = grad_output.clone()
         grad_input[input.ge(clip_val[1])] = 0
         grad_input[input.le(clip_val[0])] = 0
+
+        # -----BEGIN INTWise Estimator-----
+
+        # single hump approximation
+        grad_mat = math.exp(-T) + torch.exp(-T * delta) * T / (1 + torch.exp(-T * delta)) ** 2
+
+        # element-wise product
+        grad_input = grad_input * grad_mat
+
+        # -----END INTWise Estimator-----
+
+
         return grad_input, None, None, None
 
 
@@ -101,7 +120,6 @@ class AsymQuantizer(torch.autograd.Function):
         :param quant_bits: number of bits
         :return: quantized tensor
         """
-        ctx.save_for_backward(input, clip_val)
 
         # input = torch.where(input < clip_val[1], input, clip_val[1])
         # input = torch.where(input > clip_val[0], input, clip_val[0])
@@ -143,8 +161,13 @@ class AsymQuantizer(torch.autograd.Function):
                 raise ValueError
         input_normalized = (input - beta) / (alpha + 1e-8)
         s = 2**num_bits - 1
-        quant_input = torch.round(input_normalized * s).div(s)
+
+        input_scaled = input_normalized * s
+        quant_input = torch.round(input_scaled).div(s)
         output = quant_input * (alpha + 1e-8) + beta
+
+        delta = input_scaled - torch.floor(input_scaled) - 0.5
+        ctx.save_for_backward(input, delta, clip_val)
 
         return output
 
@@ -155,10 +178,17 @@ class AsymQuantizer(torch.autograd.Function):
         :param grad_output: gradient ert the quantized tensor
         :return: estimated gradient wrt the full-precision tensor
         """
-        input, clip_val = ctx.saved_tensors  # unclipped input
+        input, delta, clip_val = ctx.saved_tensors  # unclipped input
         grad_input = grad_output.clone()
         grad_input[input.ge(clip_val[1])] = 0
         grad_input[input.le(clip_val[0])] = 0
+
+        # -----BEGIN INTWise Estimator-----
+        grad_mat = math.exp(-T) + torch.exp(-T * delta) * T / (1 + torch.exp(-T * delta)) ** 2
+        grad_input = grad_input * grad_mat
+        # -----END INTWise Estimator-----
+
+
         return grad_input, None, None, None
 
 
