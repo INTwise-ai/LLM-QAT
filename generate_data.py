@@ -11,11 +11,13 @@ import json
 import sys
 import os
 
+hf = "NousResearch/Meta-Llama-3-8B" 
+
 print("Loading tokenizer")
-tokenizer = AutoTokenizer.from_pretrained("decapoda-research/llama-7b-hf")
+tokenizer = AutoTokenizer.from_pretrained(hf)
 print("Tokenizer loaded!")
 print("Loading model")
-model = AutoModelForCausalLM.from_pretrained("decapoda-research/llama-7b-hf")
+model = AutoModelForCausalLM.from_pretrained(hf, device_map="cuda", torch_dtype=torch.bfloat16)
 model = model.cuda()
 print("Model loaded!")
 
