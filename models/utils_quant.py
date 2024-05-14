@@ -72,7 +72,7 @@ class SymQuantizer(torch.autograd.Function):
         output = torch.round(input_scaled).div(s + 1e-6)
 
         # -----BEGIN INTWise Estimator-----
-        delta = input_scaled - torch.floor(input_scaled) - 0.5
+        delta = input_scaled - torch.floor(input_scaled) + 0.5
 
         ctx.save_for_backward(input, delta, clip_val) # save for later use
         # -----END INTWise Estimator-----
