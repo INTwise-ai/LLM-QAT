@@ -85,6 +85,7 @@ class TrainingArguments(transformers.TrainingArguments):
         metadata={"help": "Scale of KD loss."},
     )
     gradient_checkpointing: Optional[bool] = field(default=True)
+    deepspeed: Optional[str] = field(default=None)
 
 
 def process_args():

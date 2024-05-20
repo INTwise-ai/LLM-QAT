@@ -39,6 +39,7 @@ from transformers import default_data_collator, Trainer
 
 log = utils.get_logger("clm")
 
+MAP = "cuda:4"
 
 def train():
     dist.init_process_group(backend="nccl")
@@ -60,7 +61,7 @@ def train():
             cache_dir=training_args.cache_dir,
             torch_dtype=dtype,
             low_cpu_mem_usage=True,
-            device_map=None if len(training_args.fsdp) > 0 else "auto",
+            device_map=None if len(training_args.fsdp) > 0 else MAP,
         )
     else:
         model = transformers.LlamaForCausalLM.from_pretrained(
@@ -68,16 +69,17 @@ def train():
             cache_dir=training_args.cache_dir,
             torch_dtype=dtype,
             low_cpu_mem_usage=True,
-            device_map=None if len(training_args.fsdp) > 0 else "auto",
+            device_map=None if len(training_args.fsdp) > 0 else MAP,
         )
-    model.cuda()
+    # model.cuda()
+    print("Model: ", model)
     if training_args.use_kd:
         teacher_model = transformers.AutoModelForCausalLM.from_pretrained(
             pretrained_model_name_or_path=model_args.input_model_filename,
             cache_dir=training_args.cache_dir,
             torch_dtype=dtype,
             low_cpu_mem_usage=True,
-            device_map=None if len(training_args.fsdp) > 0 else "auto",
+            device_map=None if len(training_args.fsdp) > 0 else MAP,
         )
         teacher_model.eval()
         teacher_model.cuda()

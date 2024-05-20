@@ -99,7 +99,7 @@ class SymQuantizer(torch.autograd.Function):
 
         # element-wise product
         grad_input = grad_input * grad_mat
-
+        
         # -----END INTWise Estimator-----
 
 
