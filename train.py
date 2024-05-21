@@ -39,7 +39,7 @@ from transformers import default_data_collator, Trainer
 
 log = utils.get_logger("clm")
 
-MAP = "cuda:4"
+MAP = None
 
 def train():
     dist.init_process_group(backend="nccl")
@@ -60,7 +60,7 @@ def train():
             config=student_config,
             cache_dir=training_args.cache_dir,
             torch_dtype=dtype,
-            low_cpu_mem_usage=True,
+            low_cpu_mem_usage=False,
             device_map=None if len(training_args.fsdp) > 0 else MAP,
         )
     else:
@@ -68,7 +68,7 @@ def train():
             pretrained_model_name_or_path=model_args.input_model_filename,
             cache_dir=training_args.cache_dir,
             torch_dtype=dtype,
-            low_cpu_mem_usage=True,
+            low_cpu_mem_usage=False,
             device_map=None if len(training_args.fsdp) > 0 else MAP,
         )
     # model.cuda()
