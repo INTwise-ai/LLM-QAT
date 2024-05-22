@@ -2,29 +2,29 @@
 
 source ~/sdxl/tweaks_for_40XX.sh
 
-deepspeed --include localhost:2,3,4 \
+deepspeed --include localhost:2,3 \
 	train.py \
-	--local_dir "/tmp/llama/" \
+	--local_dir "./output" \
 	--input_model_filename "NousResearch/Meta-Llama-3-8B" \
 	--output_model_filename "8B-finetuned" \
-	--train_data_local_path "./gen_data/all_gen.jsonl" \
-	--eval_data_local_path "./gen_data/wiki2.jsonl" \
+	--train_data_local_path "./gen_data/wiki2.parquet" \
+	--eval_data_local_path "./gen_data/wiki2.parquet" \
 	--do_train True \
-	--do_eval True \
+	--do_eval False \
 	--model_max_length 1024 \
 	--fp16 False \
 	--bf16 True \
 	--log_on_each_node False \
 	--logging_dir /tmp/output/runs/current \
 	--deepspeed "./deepspeed.json" \
-	--num_train_epochs 10 \
+	--num_train_epochs 1 \
 	--per_device_train_batch_size 1 \
 	--per_device_eval_batch_size 1 \
 	--gradient_accumulation_steps 1 \
 	--evaluation_strategy "no" \
 	--save_strategy "steps" \
 	--save_steps 2000 \
-	--report_to "wandb" \
+	--report_to "none" \
 	--save_total_limit 1 \
 	--learning_rate 2e-5 \
 	--weight_decay 0. \

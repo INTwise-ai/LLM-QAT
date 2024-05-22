@@ -30,6 +30,7 @@ import transformers
 from transformers import LlamaForCausalLM
 from utils import utils
 from utils import datautils
+import datasets
 
 from utils.kd_trainer import KDTrainer
 
@@ -44,6 +45,35 @@ MAP = None
 def train():
     dist.init_process_group(backend="nccl")
     model_args, data_args, training_args = process_args()
+
+
+
+    log.info("Start to load tokenizer...")
+    tokenizer = transformers.AutoTokenizer.from_pretrained(
+        pretrained_model_name_or_path=model_args.input_model_filename,
+        cache_dir=training_args.cache_dir,
+        model_max_length=training_args.model_max_length,
+        padding_side="right",
+    )
+    log.info("Complete tokenizer loading")
+
+    log.info("Start to load dataset...")
+    train_dataset, valid_dataset = datautils.get_train_val_dataset(
+        train_path=data_args.train_data_local_path,
+        valid_path=data_args.eval_data_local_path
+        if data_args.eval_data_local_path is not None
+        else None,
+    )
+
+    train_data = datautils.CustomJsonDataset(
+        train_dataset, tokenizer, block_size=training_args.model_max_length
+    )
+    valid_data = datautils.CustomJsonDataset(
+        valid_dataset, tokenizer, block_size=min(training_args.model_max_length, 1024)
+    )
+    
+    log.info("Complete dataset loading")
+
 
     log.info("Start to load model...")
     dtype = torch.bfloat16 if training_args.bf16 else torch.float
@@ -88,35 +118,14 @@ def train():
         teacher_model.config.use_cache = False
         model.kd_loss_scale = training_args.kd_loss_scale
         model.teacher = teacher_model
-    log.info("Complete model loading...")
+    log.info("Complete model loading")
 
-    log.info("Start to load tokenizer...")
-    tokenizer = transformers.AutoTokenizer.from_pretrained(
-        pretrained_model_name_or_path=model_args.input_model_filename,
-        cache_dir=training_args.cache_dir,
-        model_max_length=training_args.model_max_length,
-        padding_side="right",
-    )
-    log.info("Complete tokenizer loading...")
 
-    train_dataset, valid_dataset = datautils.get_train_val_dataset(
-        train_path=data_args.train_data_local_path,
-        valid_path=data_args.eval_data_local_path
-        if data_args.eval_data_local_path is not None
-        else None,
-    )
-    train_data = datautils.CustomJsonDataset(
-        train_dataset, tokenizer, block_size=training_args.model_max_length
-    )
-    valid_data = datautils.CustomJsonDataset(
-        valid_dataset, tokenizer, block_size=min(training_args.model_max_length, 1024)
-    )
     model.config.use_cache = False
     if training_args.use_kd:
         myTrainer = KDTrainer
     else:
         myTrainer = Trainer
-
 
     model.gradient_checkpointing_enable()
 
@@ -129,12 +138,15 @@ def train():
         data_collator=default_data_collator,
     )
 
+    log.info("Training...")
     if training_args.do_train:
         train_result = trainer.train()
         trainer.save_state()
-        utils.safe_save_model_for_hf_trainer(trainer, model_args.output_model_local_path)
+        trainer.save_model(model_args.output_model_local_path)
+        # utils.safe_save_model_for_hf_trainer(trainer, model_args.output_model_local_path)
 
     # Evaluation
+    log.info("Evaluating...")
     if training_args.do_eval:
         model.to("cuda")
         metrics = trainer.evaluate()

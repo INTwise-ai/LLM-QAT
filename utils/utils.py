@@ -40,6 +40,7 @@ def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: st
     """Collects the state dict and dump to disk."""
     state_dict = trainer.model.state_dict()
     if trainer.args.should_save:
+        print("Saving model...")
         cpu_state_dict = {}
         for key in state_dict.keys():
             if "teacher" in key:

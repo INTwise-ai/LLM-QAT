@@ -1,3 +1,5 @@
 gen_data/
 .ipynb_checkpoints
 __pycache__
+output/
+wandb/

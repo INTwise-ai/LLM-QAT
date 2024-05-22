@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Dict, Sequence
 
 import numpy as np
+import pandas as pd
 import torch
 
 
@@ -27,30 +28,32 @@ def set_seed(seed):
     np.random.seed(seed)
     torch.random.manual_seed(seed)
 
-
-def get_train_val_dataset(train_path, valid_path=None):
-    f = open(train_path, "r", encoding="utf-8")
+def get_lines(path):
+    print("Reading", path)
     data = []
-    while True:
-        line = f.readline()
-        if not line:
-            break
-        data.append(json.loads(line))
-    f.close()
-    train_data = []
-    valid_data = []
-    if valid_path:
-        f = open(valid_path, "r", encoding="utf-8")
+    if path.endswith(".jsonl"):
+        f = open(train_path, "r", encoding="utf-8")
         while True:
             line = f.readline()
             if not line:
                 break
-            valid_data.append(json.loads(line))
+            data.append(json.loads(line)["text"])
         f.close()
-        train_data = data
-    else:
-        train_data = data[10000:]
-        valid_data = data[:10000]
+    elif path.endswith(".parquet"):
+        d = pd.read_parquet(path)
+        data = d["text"].to_list()
+    
+    return data
+
+def get_train_val_dataset(train_path, valid_path=None):
+    """
+    Load both datasets for training and validation
+    return ( [str], [str] )
+    """
+    train_data = get_lines(train_path)
+    valid_data = []
+    if valid_path is not None:
+        valid_data = get_lines(valid_path)
     return train_data, valid_data
 
 
@@ -81,12 +84,12 @@ class CustomJsonDataset(torch.utils.data.IterableDataset):
         return iter(self.data)
 
     def tokenize_function(self, examples):
-        return self.tokenizer(examples["text"])
+        return self.tokenizer(examples) # {'input_ids': [], 'attention_mask': []}
 
     def group_texts(self, examples):
         # Concatenate all texts.
         # Initialize an empty dictionary
-        concatenated_examples = {}
+        concatenated_examples = {} # -> input_ids, attention_mask
 
         # Loop through the list of dictionaries
         for d in examples:
@@ -112,10 +115,3 @@ class CustomJsonDataset(torch.utils.data.IterableDataset):
         }
         result["labels"] = result["input_ids"].copy()
         return result
-
-
-def jload(filename, mode="r"):
-    """Load a .json file into a dictionary."""
-    with open(filename, mode) as f:
-        jdict = json.load(f)
-    return jdict
