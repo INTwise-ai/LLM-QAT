@@ -43,6 +43,8 @@ log = utils.get_logger("clm")
 MAP = None
 
 def train():
+    torch.set_num_threads(32)
+
     dist.init_process_group(backend="nccl")
     model_args, data_args, training_args = process_args()
 
