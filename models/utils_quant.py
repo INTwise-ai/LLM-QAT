@@ -28,13 +28,21 @@ import torch.nn as nn
 
 T = 5
 
+
+def soft_clamp(x, min, max):
+    # x * LogisticSigmoid[x - min] *LogisticSigmoid[-x + max] + min*LogisticSigmoid[-x + min] + max*LogisticSigmoid[x - max]
+    return x * torch.sigmoid(x - min) * torch.sigmoid(-x + max) + min * torch.sigmoid(-x + min) + max * torch.sigmoid(x - max)
+
+CLAMP = soft_clamp
+    
+
 class SymQuantizer(torch.autograd.Function):
     """
     uniform quantization
     """
 
     @staticmethod
-    def forward(ctx, input, clip_val, num_bits, layerwise):
+    def forward(ctx, input, clip_val, num_bits, layerwise, s=None):
         """
         :param ctx:
         :param input: tensor to be quantized
@@ -45,31 +53,39 @@ class SymQuantizer(torch.autograd.Function):
         # input = torch.clamp(input, clip_val[0], clip_val[1])
         # input = torch.where(input < clip_val[1], input, clip_val[1])
         # input = torch.where(input > clip_val[0], input, clip_val[0])
-        # NOTE: dynamic scaling (max_input).
-        if layerwise:
-            max_input = torch.max(torch.abs(input)).expand_as(input)
-        else:
-            if input.ndimension() <= 3:
-                # weight & hidden layer
-                max_input = (
-                    torch.max(torch.abs(input), dim=-1, keepdim=True)[0]
-                    .expand_as(input)
-                    .detach()
-                )
-            elif input.ndimension() == 4:
-                # TODO: attention score matrix, calculate alpha / beta per head
-                tmp = input.view(input.shape[0], input.shape[1], -1)
-                max_input = (
-                    torch.max(torch.abs(tmp), dim=-1, keepdim=True)[0]
-                    .unsqueeze(-1)
-                    .expand_as(input)
-                    .detach()
-                )
+        
+        # Dynamic scaling for initialization
+
+        if s is None:
+            if layerwise:
+                max_input = torch.max(torch.abs(input)).expand_as(input)
             else:
-                raise ValueError
-        s = (2 ** (num_bits - 1) - 1) / (max_input + 1e-6)
+                if input.ndimension() <= 3:
+                    # weight & hidden layer
+                    max_input = (
+                        torch.max(torch.abs(input), dim=-1, keepdim=True)[0]
+                        .expand_as(input)
+                        .detach()
+                    )
+                elif input.ndimension() == 4:
+                    # TODO: attention score matrix, calculate alpha / beta per head
+                    tmp = input.view(input.shape[0], input.shape[1], -1)
+                    max_input = (
+                        torch.max(torch.abs(tmp), dim=-1, keepdim=True)[0]
+                        .unsqueeze(-1)
+                        .expand_as(input)
+                        .detach()
+                    )
+                else:
+                    raise ValueError
+            # Dynamic scaling: scale = max representable value / max input value
+            s = (2 ** (num_bits - 1) - 1) / (max_input + 1e-6)
+
+        max_repr = 2 ** (num_bits - 1) - 1
+        min_repr = -2 ** (num_bits - 1)
+
         input_scaled = input * s
-        output = torch.round(input_scaled).div(s + 1e-6)
+        output = CLAMP(torch.round(input_scaled), min_repr, max_repr).div(s + 1e-6)
 
         # -----BEGIN INTWise Estimator-----
         delta = input_scaled - torch.floor(input_scaled) + 0.5
@@ -106,97 +122,13 @@ class SymQuantizer(torch.autograd.Function):
         return grad_input, None, None, None
 
 
-class AsymQuantizer(torch.autograd.Function):
-    """
-    min-max quantization
-    """
 
-    @staticmethod
-    def forward(ctx, input, clip_val, num_bits, layerwise):
-        """
-        :param ctx:
-        :param input: tensor to be quantized
-        :param clip_val: clip the tensor before quantization
-        :param quant_bits: number of bits
-        :return: quantized tensor
-        """
-
-        # input = torch.where(input < clip_val[1], input, clip_val[1])
-        # input = torch.where(input > clip_val[0], input, clip_val[0])
-        # input = torch.clamp(input, clip_val[0], clip_val[1])
-        # NOTE: dynamic scaling gives better performance than static
-        if layerwise:
-            alpha = (input.max() - input.min()).detach()
-            beta = input.min().detach()
-        else:
-            if input.ndimension() <= 3:
-                # weight & hidden layer
-                alpha = (
-                    (
-                        input.max(dim=-1, keepdim=True)[0]
-                        - input.min(dim=-1, keepdim=True)[0]
-                    )
-                    .expand_as(input)
-                    .detach()
-                )
-                beta = input.min(dim=-1, keepdim=True)[0].expand_as(input).detach()
-            elif input.ndimension() == 4:
-                # TODO: attention score matrix, calculate alpha / beta per head
-                tmp = input.view(input.shape[0], input.shape[1], -1)
-                alpha = (
-                    (
-                        tmp.max(dim=-1, keepdim=True)[0].unsqueeze(-1)
-                        - tmp.min(dim=-1, keepdim=True)[0].unsqueeze(-1)
-                    )
-                    .expand_as(input)
-                    .detach()
-                )
-                beta = (
-                    tmp.min(dim=-1, keepdim=True)[0]
-                    .unsqueeze(-1)
-                    .expand_as(input)
-                    .detach()
-                )
-            else:
-                raise ValueError
-        input_normalized = (input - beta) / (alpha + 1e-8)
-        s = 2**num_bits - 1
-
-        input_scaled = input_normalized * s
-        quant_input = torch.round(input_scaled).div(s)
-        output = quant_input * (alpha + 1e-8) + beta
-
-        delta = input_scaled - torch.floor(input_scaled) - 0.5
-        ctx.save_for_backward(input, delta, clip_val)
-
-        return output
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        """
-        :param ctx: saved non-clipped full-precision tensor and clip_val
-        :param grad_output: gradient ert the quantized tensor
-        :return: estimated gradient wrt the full-precision tensor
-        """
-        input, delta, clip_val = ctx.saved_tensors  # unclipped input
-        grad_input = grad_output.clone()
-        grad_input[input.ge(clip_val[1])] = 0
-        grad_input[input.le(clip_val[0])] = 0
-
-        # -----BEGIN INTWise Estimator-----
-        grad_mat = math.exp(-T) + torch.exp(-T * delta) * T / (1 + torch.exp(-T * delta)) ** 2
-        grad_input = grad_input * grad_mat
-        # -----END INTWise Estimator-----
-
-
-        return grad_input, None, None, None
 
 
 class QuantizeLinear(nn.Linear):
     def __init__(
         self,
         *kargs,
-        symmetric=True,
         bias=False,
         w_bits=32,
         a_bits=32,
@@ -212,10 +144,10 @@ class QuantizeLinear(nn.Linear):
         # if self.w_bits < 32:
         #     self.weight_clip_val = Parameter(torch.tensor([-2.0, 2.0]), requires_grad=False)
         if self.a_bits < 32 and self.a_bits > 2:
-            if symmetric:
-                self.act_quantizer = SymQuantizer
-            else:
-                self.act_quantizer = AsymQuantizer
+            self.act_quantizer = SymQuantizer
+            # Learnable scaling factor
+            self.s_weight = nn.Parameter(torch.tensor([1.0]), requires_grad=False)
+            self.s_input = nn.Parameter(torch.tensor([1.0]), requires_grad=False)
 
     def forward(self, input_):
         # quantize weight
@@ -227,7 +159,7 @@ class QuantizeLinear(nn.Linear):
         elif self.w_bits >= 3:
             weight_clip_val = torch.tensor([-2.0, 2.0])
             weight = SymQuantizer.apply(
-                real_weights, weight_clip_val, self.w_bits, self.weight_layerwise
+                real_weights, weight_clip_val, self.w_bits, self.weight_layerwise, s=self.s_weight
             )
         else:
             if self.w_bits == 1:
@@ -274,7 +206,7 @@ class QuantizeLinear(nn.Linear):
         if self.a_bits < 32 and self.a_bits > 2:
             act_clip_val = torch.tensor([-2.0, 2.0])
             input_ = self.act_quantizer.apply(
-                input_, act_clip_val, self.a_bits, self.act_layerwise
+                input_, act_clip_val, self.a_bits, self.act_layerwise, s=self.s_input
             )
 
         out = nn.functional.linear(input_, weight)
